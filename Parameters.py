@@ -10,8 +10,13 @@ class Parameters:
         self.dir_test_examples = os.path.join(self.test_dir, 'simpsons_validare/')
         self.path_annotations = os.path.join(self.test_dir, 'simpsons_validare.txt')
         self.dir_save_files = os.path.join(self.base_dir, 'savedFiles')
-        self.image_scales = [0.9, 0.7, 0.5, 0.3]
         self.image_initial_scale = 1.5
+        self.image_minimize_scale = 0.90
+        # self.window_proportions = [(36, 36), (32, 40), (28, 45)]
+        self.window_proportions = [(36, 36), (36, 45), (36, 56)]
+        self.window_scales = [(1, 1), (1, 0.8), (1, 0.65)]
+        # self.image_initial_scale = 1.35
+        # self.image_minimize_scale = 0.90
         if not os.path.exists(self.dir_save_files):
             os.makedirs(self.dir_save_files)
             print('directory created: {} '.format(self.dir_save_files))

@@ -1,15 +1,31 @@
 import os
 import numpy as np
 import cv2 as cv
+from collections import defaultdict
 
 root_path = "../antrenare/"
 
 names = ["bart", "homer", "lisa", "marge"]
 
-image_names = []
-bboxes = []
+totalBoxes = defaultdict(lambda: [])
 characters = []
 nb_examples = 0
+
+def intersection(current_box, detection_box):
+    x_a = max(current_box[0], detection_box[0])
+    y_a = max(current_box[1], detection_box[1])
+    x_b = min(current_box[2], detection_box[2])
+    y_b = min(current_box[3], detection_box[3])
+
+    inter_area = max(0, x_b - x_a + 1) * max(0, y_b - y_a + 1)
+
+    box_a_area = (current_box[2] - current_box[0] + 1) * (current_box[3] - current_box[1] + 1)
+    box_b_area = (detection_box[2] - detection_box[0] + 1) * (detection_box[3] - detection_box[1] + 1)
+
+    iou = inter_area / float(box_a_area + box_b_area - inter_area)
+
+    return iou
+
 
 if __name__ == "__main__":
     for name in names:
@@ -23,8 +39,7 @@ if __name__ == "__main__":
             bbox = [int(b[1]), int(b[2]), int(b[3]), int(b[4])]
             character = b[5][:-1]
 
-            image_names.append(image_name)
-            bboxes.append(bbox)
+            totalBoxes[image_name].append(bbox)
             characters.append(character)
             nb_examples = nb_examples + 1
 
@@ -34,7 +49,7 @@ if __name__ == "__main__":
 
     # compute negative examples using 36 X 36 template
 
-    for idx, img_name in enumerate(image_names):
+    for idx, img_name in enumerate(totalBoxes.keys()):
         print(idx, img_name)
         img = cv.imread(img_name)
         print("img shape")
@@ -45,10 +60,20 @@ if __name__ == "__main__":
 
         # genereaza 10 exemple negative fara sa compari cu nimic, iei ferestre la intamplare 36 x 36
         for i in range(number_negatives_per_image):
-            x = np.random.randint(low=0, high=num_cols - width_hog)
-            y = np.random.randint(low=0, high=num_rows - height_hog)
+            bbox_curent = []
+            ok = False
+            step = 0
+            while not ok or step > 20:
+                ok = True
+                x = np.random.randint(low=0, high=num_cols - width_hog)
+                y = np.random.randint(low=0, high=num_rows - height_hog)
 
-            bbox_curent = [x, y, x + width_hog, y + height_hog]
+                bbox_curent = [x, y, x + width_hog, y + height_hog]
+
+                for detection in totalBoxes[img_name]:
+                    if intersection(bbox_curent, detection) > 0.5:
+                        ok = False
+                step += 1
 
             xmin = bbox_curent[0]
             ymin = bbox_curent[1]

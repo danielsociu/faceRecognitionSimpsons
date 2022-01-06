@@ -56,8 +56,6 @@ class FacialDetector:
         for i in range(num_images):
             print('Procesam exemplul negativ numarul %d...' % i)
             img = cv.imread(files[i], cv.IMREAD_GRAYSCALE)
-            # completati codul functiei in continuare
-            # TODO: sterge
             features = hog(img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
                            cells_per_block=(2, 2), feature_vector=True)
 
@@ -112,24 +110,6 @@ class FacialDetector:
         plt.legend(['Scoruri exemple pozitive', '0', 'Scoruri exemple negative'])
         plt.show()
 
-    def intersection_over_union(self, bbox_a, bbox_b):
-        x_a = max(bbox_a[0], bbox_b[0])
-        y_a = max(bbox_a[1], bbox_b[1])
-        x_b = min(bbox_a[2], bbox_b[2])
-        y_b = min(bbox_a[3], bbox_b[3])
-
-        inter_area = max(0, x_b - x_a + 1) * max(0, y_b - y_a + 1)
-
-        box_a_area = (bbox_a[2] - bbox_a[0] + 1) * (bbox_a[3] - bbox_a[1] + 1)
-        box_b_area = (bbox_b[2] - bbox_b[0] + 1) * (bbox_b[3] - bbox_b[1] + 1)
-
-        if inter_area == 0:
-            return 1
-
-        iou = inter_area / float(box_a_area + box_b_area - inter_area)
-
-        return iou
-
     def non_maximal_suppression(self, image_detections, image_scores, image_size):
         """
         Detectiile cu scor mare suprima detectiile ce se suprapun cu acestea dar au scor mai mic.
@@ -145,6 +125,7 @@ class FacialDetector:
         x_out_of_bounds = np.where(image_detections[:, 2] > image_size[1])[0]
         y_out_of_bounds = np.where(image_detections[:, 3] > image_size[0])[0]
         print(x_out_of_bounds, y_out_of_bounds)
+        # print(image_detections[:, 2], image_detections[:, 3])
         image_detections[x_out_of_bounds, 2] = image_size[1]
         image_detections[y_out_of_bounds, 3] = image_size[0]
         sorted_indices = np.flipud(np.argsort(image_scores))
@@ -156,8 +137,7 @@ class FacialDetector:
         for i in range(len(sorted_image_detections) - 1):
             if is_maximal[i] == True:  # don't change to 'is True' because is a numpy True and is not a python True :)
                 for j in range(i + 1, len(sorted_image_detections)):
-                    if is_maximal[
-                        j] == True:  # don't change to 'is True' because is a numpy True and is not a python True :)
+                    if is_maximal[j] == True:  # don't change to 'is True' because is a numpy True and is not a python True :)
                         if self.intersection_over_union(sorted_image_detections[i],
                                                         sorted_image_detections[j]) > iou_threshold:
                             is_maximal[j] = False
@@ -196,54 +176,78 @@ class FacialDetector:
         w = self.best_model.coef_.T
         bias = self.best_model.intercept_[0]
         num_test_images = len(test_files)
-        descriptors_to_return = []
+
         for i in range(num_test_images):
             start_time = timeit.default_timer()
             print('Procesam imaginea de testare %d/%d..' % (i, num_test_images))
-            working_img = cv.imread(test_files[i], cv.IMREAD_GRAYSCALE)
-            working_img = cv.resize(working_img, (0, 0), fx=self.params.image_initial_scale, fy=self.params.image_initial_scale, interpolation=cv.INTER_CUBIC)
-            # TODO: completati codul functiei in continuare
-            for scale in self.params.image_scales:
-                img = cv.resize(working_img, (0, 0), fx=scale, fy=scale, interpolation=cv.INTER_AREA)
-                image_scores = []
-                image_detections = []
-                original_image = img.copy()
-                hog_descriptor = hog(img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                                     cells_per_block=(2, 2), feature_vector=False)
-                num_cols = img.shape[1] // self.params.dim_hog_cell - 1
-                num_rows = img.shape[0] // self.params.dim_hog_cell - 1
-                num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
+            original_image = cv.imread(test_files[i], cv.IMREAD_GRAYSCALE)
+            img = cv.resize(original_image, (0, 0), fx=self.params.image_initial_scale,
+                            fy=self.params.image_initial_scale, interpolation=cv.INTER_CUBIC)
+            power = 0
 
-                for y in range(0, num_rows - num_cell_in_template):
-                    for x in range(0, num_cols - num_cell_in_template):
-                        descr = hog_descriptor[y: y + num_cell_in_template, x: x + num_cell_in_template].flatten()
-                        score = np.dot(descr, w)[0] + bias
-                        if score > self.params.threshold:
-                            x_min = int((x * self.params.dim_hog_cell) * self.params.image_initial_scale * scale)
-                            y_min = int((y * self.params.dim_hog_cell) * self.params.image_initial_scale * scale)
-                            x_max = int((x * self.params.dim_hog_cell + self.params.dim_window) * self.params.image_initial_scale * scale)
-                            y_max = int((y * self.params.dim_hog_cell + self.params.dim_window) * self.params.image_initial_scale * scale)
-                            image_detections.append([x_min, y_min, x_max, y_max])
-                            image_scores.append(score)
-                if len(image_scores) > 0:
-                    image_detections, image_scores = self.non_maximal_suppression(np.array(image_detections),
-                                                                                  np.array(image_scores),
-                                                                                  original_image.shape)
-                if len(image_scores) > 0:
-                    if detections is None:
-                        detections = image_detections
-                    else:
-                        detections = np.concatenate((detections, image_detections))
-                    scores = np.append(scores, image_scores)
-                    short_file_name = ntpath.basename(test_files[i])
-                    image_names = [short_file_name for _ in range(len(image_scores))]
-                    file_names = np.append(file_names, image_names)
+            image_scores = []
+            image_detections = []
 
-                end_time = timeit.default_timer()
-                print('Timpul de procesarea al imaginii de testare %d/%d este %f sec.'
-                      % (i, num_test_images, end_time - start_time))
+            while min(img.shape[0], img.shape[1]) > self.params.dim_window:
+                for fx, fy in self.params.window_scales:
+                    distorted_img = cv.resize(img, (0, 0), fx=fx, fy=fy, interpolation=cv.INTER_AREA)
+                    hog_descriptor = hog(distorted_img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+                                         cells_per_block=(2, 2), feature_vector=False)
+                    num_cols = distorted_img.shape[1] // self.params.dim_hog_cell - 1
+                    num_rows = distorted_img.shape[0] // self.params.dim_hog_cell - 1
+                    num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
+
+                    for y in range(0, num_rows - num_cell_in_template):
+                        for x in range(0, num_cols - num_cell_in_template):
+                            descr = hog_descriptor[y: y + num_cell_in_template, x: x + num_cell_in_template].flatten()
+                            score = np.dot(descr, w)[0] + bias
+                            if score > self.params.threshold:
+                                actual_zoom = 1 / (
+                                            self.params.image_initial_scale * (self.params.image_minimize_scale ** power))
+                                x_min = int((x * self.params.dim_hog_cell / fx) * actual_zoom)
+                                y_min = int((y * self.params.dim_hog_cell / fy) * actual_zoom)
+                                x_max = int(((x * self.params.dim_hog_cell + self.params.dim_window) / fx) * actual_zoom)
+                                y_max = int(((y * self.params.dim_hog_cell + self.params.dim_window) / fy) * actual_zoom)
+                                image_detections.append([x_min, y_min, x_max, y_max])
+                                image_scores.append(score)
+                img = cv.resize(img, (0, 0), fx=self.params.image_minimize_scale, fy=self.params.image_minimize_scale,
+                                interpolation=cv.INTER_AREA)
+                power += 1
+
+            if len(image_scores) > 0:
+                image_detections, image_scores = self.non_maximal_suppression(np.array(image_detections),
+                                                                              np.array(image_scores),
+                                                                              original_image.shape)
+            if len(image_scores) > 0:
+                if detections is None:
+                    detections = image_detections
+                else:
+                    detections = np.concatenate((detections, image_detections))
+                scores = np.append(scores, image_scores)
+                short_file_name = ntpath.basename(test_files[i])
+                image_names = [short_file_name for _ in range(len(image_scores))]
+                file_names = np.append(file_names, image_names)
+
+            end_time = timeit.default_timer()
+            print('Timpul de procesarea al imaginii de testare %d/%d este %f sec.'
+                  % (i, num_test_images, end_time - start_time))
 
         return detections, scores, file_names
+
+    def intersection_over_union(self, bbox_a, bbox_b):
+        x_a = max(bbox_a[0], bbox_b[0])
+        y_a = max(bbox_a[1], bbox_b[1])
+        x_b = min(bbox_a[2], bbox_b[2])
+        y_b = min(bbox_a[3], bbox_b[3])
+
+        inter_area = max(0, x_b - x_a + 1) * max(0, y_b - y_a + 1)
+
+        box_a_area = (bbox_a[2] - bbox_a[0] + 1) * (bbox_a[3] - bbox_a[1] + 1)
+        box_b_area = (bbox_b[2] - bbox_b[0] + 1) * (bbox_b[3] - bbox_b[1] + 1)
+
+        iou = inter_area / float(box_a_area + box_b_area - inter_area)
+
+        return iou
 
     def compute_average_precision(self, rec, prec):
         # functie adaptata din 2010 Pascal VOC development kit

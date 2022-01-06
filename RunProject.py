@@ -10,7 +10,7 @@ params.dim_hog_cell = 4 # dimensiunea celulei
 params.overlap = 0.3
 params.number_positive_examples = 5000  # numarul exemplelor pozitive
 params.number_negative_examples = 50000  # numarul exemplelor negative
-params.threshold = 1 # toate ferestrele cu scorul > threshold si maxime locale devin detectii
+params.threshold = 3 # toate ferestrele cu scorul > threshold si maxime locale devin detectii
 params.has_annotations = True
 
 
