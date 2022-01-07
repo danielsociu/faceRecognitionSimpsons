@@ -45,40 +45,63 @@ if __name__ == "__main__":
 
     width_hog = 36
     height_hog = 36
-    number_negatives_per_image = 10
 
     # compute negative examples using 36 X 36 template
+    limit = 100000
+    room_limit = 20
+    generated = 0
 
     for idx, img_name in enumerate(totalBoxes.keys()):
         print(idx, img_name)
         img = cv.imread(img_name)
         print("img shape")
         print(img.shape)
+        if generated > limit:
+            break
 
         num_rows = img.shape[0]
         num_cols = img.shape[1]
+        current_room_generated = 0
 
-        # genereaza 10 exemple negative fara sa compari cu nimic, iei ferestre la intamplare 36 x 36
-        for i in range(number_negatives_per_image):
-            bbox_curent = []
-            ok = False
-            step = 0
-            while not ok or step > 20:
-                ok = True
-                x = np.random.randint(low=0, high=num_cols - width_hog)
-                y = np.random.randint(low=0, high=num_rows - height_hog)
-
+        for x in range(0, num_cols - width_hog, width_hog):
+            for y in range(0, num_rows - height_hog, height_hog):
+                if current_room_generated > room_limit:
+                    break
                 bbox_curent = [x, y, x + width_hog, y + height_hog]
 
                 for detection in totalBoxes[img_name]:
-                    if intersection(bbox_curent, detection) > 0.5:
-                        ok = False
-                step += 1
+                    if intersection(bbox_curent, detection) > 0.2:
+                        continue
 
-            xmin = bbox_curent[0]
-            ymin = bbox_curent[1]
-            xmax = bbox_curent[2]
-            ymax = bbox_curent[3]
-            negative_example = img[ymin:ymax, xmin:xmax]
-            filename = "../data/negativeExamples/" + str(idx * number_negatives_per_image + i) + ".jpg"
-            cv.imwrite(filename, negative_example)
+                xmin = bbox_curent[0]
+                ymin = bbox_curent[1]
+                xmax = bbox_curent[2]
+                ymax = bbox_curent[3]
+                negative_example = img[ymin:ymax, xmin:xmax]
+                filename = "../data/negativeExamples/" + str(generated) + ".jpg"
+                generated += 1
+                current_room_generated += 1
+                cv.imwrite(filename, negative_example)
+
+                # bbox_curent = []
+                # ok = False
+                # step = 0
+                # while not ok or step > 20:
+                #     ok = True
+                #     x = np.random.randint(low=0, high=num_cols - width_hog)
+                #     y = np.random.randint(low=0, high=num_rows - height_hog)
+                #
+                #     bbox_curent = [x, y, x + width_hog, y + height_hog]
+                #
+                #     for detection in totalBoxes[img_name]:
+                #         if intersection(bbox_curent, detection) > 0.3:
+                #             ok = False
+                #     step += 1
+                #
+                # xmin = bbox_curent[0]
+                # ymin = bbox_curent[1]
+                # xmax = bbox_curent[2]
+                # ymax = bbox_curent[3]
+                # negative_example = img[ymin:ymax, xmin:xmax]
+                # filename = "../data/negativeExamples/" + str(idx * number_negatives_per_image + i) + ".jpg"
+                # cv.imwrite(filename, negative_example)

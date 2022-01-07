@@ -1,4 +1,8 @@
 import cv2
+import pandas as pd
+from tensorflow import keras
+from tensorflow.keras import regularizers
+from tensorflow.keras import layers
 
 from Parameters import *
 import numpy as np
@@ -19,6 +23,7 @@ class FacialDetector:
     def __init__(self, params: Parameters):
         self.params = params
         self.best_model = None
+        self.neural_model = None
 
     def get_positive_descriptors(self):
         print("AM GENERAT MAI INTAI EXEMPLELE POZITIVE")
@@ -31,15 +36,13 @@ class FacialDetector:
         for i in range(num_images):
             print('Procesam exemplul pozitiv numarul %d...' % i)
             img = cv.imread(files[i], cv.IMREAD_GRAYSCALE)
-            # completati codul functiei in continuare
-            # TODO: sterge
             features = hog(img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                           cells_per_block=(2, 2), feature_vector=True)
+                           cells_per_block=self.params.cells_per_block, feature_vector=True)
 
             positive_descriptors.append(features)
             if self.params.use_flip_images:
                 features = hog(np.fliplr(img), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                               cells_per_block=(2, 2), feature_vector=True)
+                               cells_per_block=self.params.cells_per_block, feature_vector=True)
                 positive_descriptors.append(features)
 
         positive_descriptors = np.array(positive_descriptors)
@@ -57,12 +60,12 @@ class FacialDetector:
             print('Procesam exemplul negativ numarul %d...' % i)
             img = cv.imread(files[i], cv.IMREAD_GRAYSCALE)
             features = hog(img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                           cells_per_block=(2, 2), feature_vector=True)
+                           cells_per_block=self.params.cells_per_block, feature_vector=True)
 
             negative_descriptors.append(features)
             if self.params.use_flip_images:
                 features = hog(np.fliplr(img), pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                               cells_per_block=(2, 2), feature_vector=True)
+                               cells_per_block=self.params.cells_per_block, feature_vector=True)
                 negative_descriptors.append(features)
 
         negative_descriptors = np.array(negative_descriptors)
@@ -82,7 +85,8 @@ class FacialDetector:
         Cs = [10 ** -5, 10 ** -4, 10 ** -3, 10 ** -2, 10 ** -1, 10 ** 0]
         for c in Cs:
             print('Antrenam un clasificator pentru c=%f' % c)
-            model = LinearSVC(C=c)
+            model = LinearSVC(C=c, penalty='l2', loss='squared_hinge', dual=False, tol=1e-4,
+                              multi_class='ovr', fit_intercept=True, intercept_scaling=2, verbose=True)
             model.fit(training_examples, train_labels)
             acc = model.score(training_examples, train_labels)
             if acc > best_accuracy:
@@ -110,6 +114,111 @@ class FacialDetector:
         plt.legend(['Scoruri exemple pozitive', '0', 'Scoruri exemple negative'])
         plt.show()
 
+    def train_classifier_CNN(self, training_examples, train_labels, ignore_restore=True):
+        cnn_file_name = os.path.join(self.params.dir_save_files, 'best_model_%d_%d_%d_CNN' %
+                                     (self.params.dim_hog_cell, self.params.number_negative_examples,
+                                      self.params.number_positive_examples))
+        if os.path.exists(cnn_file_name) and ignore_restore:
+            self.neural_model = keras.models.load_model(cnn_file_name)
+            return
+
+        data = np.hstack((training_examples, train_labels.reshape(len(train_labels), 1)))
+        np.random.shuffle(data)
+        percentage = 80
+        partition = int(len(training_examples) * percentage / 100)
+        x_train, x_test = data[:partition, :-1], data[partition:, :-1]
+        y_train, y_test = data[:partition, -1:].ravel(), data[partition:, -1:].ravel()
+
+        neural_model = keras.Sequential()
+        # neural_model.add(keras.Input(batch_input_shape=(64, 1296)))
+        neural_model.add(layers.Dense(128, input_shape=(len(training_examples[0]), ), activation='relu'))
+        neural_model.add(layers.Dense(64, activation='relu'))
+        neural_model.add(layers.Dense(1, kernel_regularizer=regularizers.l2(0.01)))
+        neural_model.add(layers.Activation('linear'))
+        neural_model.summary()
+
+        neural_model.compile(loss='hinge',
+                             optimizer='adam',
+                             metrics=['accuracy'])
+
+        result = neural_model.fit(
+            x_train,
+            y_train,
+            validation_data=(x_test, y_test),
+            epochs=5,
+            # shuffle=True,
+            verbose=True,
+            use_multiprocessing=True,
+        )
+
+        neural_model.save(cnn_file_name)
+        self.neural_model = neural_model
+
+        print("Accuracy: " + str(np.array(result.history['accuracy'])))
+        print("Val accuracy:" + str(np.array(result.history['val_accuracy'])))
+
+    def train_classifier_CNN_with_HOG(self, training_examples, train_labels, ignore_restore=True):
+        cnn_file_name = os.path.join(self.params.dir_save_files, 'best_model_%d_%d_%d_CNN_with_HOG' %
+                                     (self.params.dim_hog_cell, self.params.number_negative_examples,
+                                      self.params.number_positive_examples))
+        if os.path.exists(cnn_file_name) and ignore_restore:
+            self.neural_model_with_HOG = keras.models.load_model(cnn_file_name)
+            return
+
+        data = np.hstack((training_examples, train_labels.reshape(len(train_labels), 1)))
+        np.random.shuffle(data)
+        percentage = 80
+        partition = int(len(training_examples) * percentage / 100)
+        x_train, x_test = data[:partition, :-1], data[partition:, :-1]
+        y_train, y_test = data[:partition, -1:].ravel(), data[partition:, -1:].ravel()
+
+        neural_model = keras.Sequential()
+        # neural_model.add(keras.Input(batch_input_shape=(64, 1296)))
+        neural_model.add(layers.Dense(128, input_shape=(len(training_examples[0]), ), activation='relu'))
+        neural_model.add(layers.Dense(64, activation='relu'))
+        neural_model.add(layers.Dense(1, kernel_regularizer=regularizers.l2(0.01)))
+        neural_model.add(layers.Activation('linear'))
+        neural_model.summary()
+
+        neural_model.compile(loss='hinge',
+                             optimizer='adam',
+                             metrics=['accuracy'])
+
+        result = neural_model.fit(
+            x_train,
+            y_train,
+            validation_data=(x_test, y_test),
+            epochs=5,
+            # shuffle=True,
+            verbose=True,
+            use_multiprocessing=True,
+        )
+
+        neural_model.save(cnn_file_name)
+        self.neural_model_with_HOG = neural_model
+
+        print("Accuracy: " + str(np.array(result.history['accuracy'])))
+        print("Val accuracy:" + str(np.array(result.history['val_accuracy'])))
+        # print('Performanta clasificatorului optim pt c = %f' % best_c)
+        # # salveaza clasificatorul
+        # pickle.dump(best_model, open(cnn_file_name, 'wb'))
+
+        # # vizualizeaza cat de bine sunt separate exemplele pozitive de cele negative dupa antrenare
+        # # ideal ar fi ca exemplele pozitive sa primeasca scoruri > 0, iar exemplele negative sa primeasca scoruri < 0
+        # scores = best_model.decision_function(training_examples)
+        # self.best_model = best_model
+        # positive_scores = scores[train_labels > 0]
+        # negative_scores = scores[train_labels <= 0]
+        #
+        # plt.plot(np.sort(positive_scores))
+        # plt.plot(np.zeros(len(negative_scores) + 20))
+        # plt.plot(np.sort(negative_scores))
+        # plt.xlabel('Nr example antrenare')
+        # plt.ylabel('Scor clasificator')
+        # plt.title('Distributia scorurilor clasificatorului pe exemplele de antrenare')
+        # plt.legend(['Scoruri exemple pozitive', '0', 'Scoruri exemple negative'])
+        # plt.show()
+
     def non_maximal_suppression(self, image_detections, image_scores, image_size):
         """
         Detectiile cu scor mare suprima detectiile ce se suprapun cu acestea dar au scor mai mic.
@@ -133,13 +242,13 @@ class FacialDetector:
         sorted_scores = image_scores[sorted_indices]
 
         is_maximal = np.ones(len(image_detections)).astype(bool)
-        iou_threshold = 0.3
+        # iou_threshold = 0.3
         for i in range(len(sorted_image_detections) - 1):
             if is_maximal[i] == True:  # don't change to 'is True' because is a numpy True and is not a python True :)
                 for j in range(i + 1, len(sorted_image_detections)):
-                    if is_maximal[j] == True:  # don't change to 'is True' because is a numpy True and is not a python True :)
+                    if is_maximal[j] == True:
                         if self.intersection_over_union(sorted_image_detections[i],
-                                                        sorted_image_detections[j]) > iou_threshold:
+                                                        sorted_image_detections[j]) > self.params.iou_threshold:
                             is_maximal[j] = False
                         else:  # verificam daca centrul detectiei este in mijlocul detectiei cu scor mai mare
                             c_x = (sorted_image_detections[j][0] + sorted_image_detections[j][2]) / 2
@@ -183,6 +292,9 @@ class FacialDetector:
             original_image = cv.imread(test_files[i], cv.IMREAD_GRAYSCALE)
             img = cv.resize(original_image, (0, 0), fx=self.params.image_initial_scale,
                             fy=self.params.image_initial_scale, interpolation=cv.INTER_CUBIC)
+            color_img = cv.imread(test_files[i], cv.IMREAD_COLOR)
+            color_img = cv.resize(color_img, (0, 0), fx=self.params.image_initial_scale,
+                                  fy=self.params.image_initial_scale, interpolation=cv.INTER_CUBIC)
             power = 0
 
             image_scores = []
@@ -191,29 +303,156 @@ class FacialDetector:
             while min(img.shape[0], img.shape[1]) > self.params.dim_window:
                 for fx, fy in self.params.window_scales:
                     distorted_img = cv.resize(img, (0, 0), fx=fx, fy=fy, interpolation=cv.INTER_AREA)
-                    hog_descriptor = hog(distorted_img, pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
-                                         cells_per_block=(2, 2), feature_vector=False)
+                    if min(distorted_img.shape[0], distorted_img.shape[1]) < self.params.dim_window:
+                        break
+                    distorted_color_img = cv.resize(color_img, (0, 0), fx=fx, fy=fy, interpolation=cv.INTER_AREA)
+                    hog_descriptor = hog(distorted_img,
+                                         pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+                                         cells_per_block=self.params.cells_per_block, feature_vector=False)
+                    whole_masked_image = cv.inRange(cv.cvtColor(distorted_color_img, cv.COLOR_BGR2HSV),
+                                                    self.params.hsv_color1, self.params.hsv_color2)
                     num_cols = distorted_img.shape[1] // self.params.dim_hog_cell - 1
                     num_rows = distorted_img.shape[0] // self.params.dim_hog_cell - 1
-                    num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - 1
+                    num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - (
+                                self.params.cells_per_block[0] - 1)
 
-                    for y in range(0, num_rows - num_cell_in_template):
-                        for x in range(0, num_cols - num_cell_in_template):
+                    for y in range(0, num_rows - num_cell_in_template, self.params.step_between_windows):
+                        for x in range(0, num_cols - num_cell_in_template, self.params.step_between_windows):
+                            x_index_image = x * self.params.dim_hog_cell
+                            y_index_image = y * self.params.dim_hog_cell
                             descr = hog_descriptor[y: y + num_cell_in_template, x: x + num_cell_in_template].flatten()
+                            # masked_img = cv.inRange(cv.cvtColor(distorted_color_img[y_index_image: y_index_image + self.params.dim_window, x_index_image:x_index_image + self.params.dim_window], cv.COLOR_BGR2HSV),
+                            #                         self.params.hsv_color1, self.params.hsv_color2)
+                            window_masked_img = whole_masked_image[
+                                                y_index_image: y_index_image + self.params.dim_window,
+                                                x_index_image:x_index_image + self.params.dim_window]
+                            # print(distorted_hsv_img[y: y + self.params.dim_window, x:x + self.params.dim_window].shape)
+                            counter_yellow = (window_masked_img == 255).sum()
                             score = np.dot(descr, w)[0] + bias
-                            if score > self.params.threshold:
+                            # score = self.neural_model.predict(np.array([descr, ]))[0]
+                            # if score > self.params.threshold:
+                            if score > self.params.threshold and counter_yellow > (
+                                    self.params.dim_window ** 2) * self.params.yellow_percentage:
                                 actual_zoom = 1 / (
-                                            self.params.image_initial_scale * (self.params.image_minimize_scale ** power))
+                                        self.params.image_initial_scale * (self.params.image_minimize_scale ** power))
                                 x_min = int((x * self.params.dim_hog_cell / fx) * actual_zoom)
                                 y_min = int((y * self.params.dim_hog_cell / fy) * actual_zoom)
-                                x_max = int(((x * self.params.dim_hog_cell + self.params.dim_window) / fx) * actual_zoom)
-                                y_max = int(((y * self.params.dim_hog_cell + self.params.dim_window) / fy) * actual_zoom)
+                                x_max = int(
+                                    ((x * self.params.dim_hog_cell + self.params.dim_window) / fx) * actual_zoom)
+                                y_max = int(
+                                    ((y * self.params.dim_hog_cell + self.params.dim_window) / fy) * actual_zoom)
                                 image_detections.append([x_min, y_min, x_max, y_max])
                                 image_scores.append(score)
                 img = cv.resize(img, (0, 0), fx=self.params.image_minimize_scale, fy=self.params.image_minimize_scale,
                                 interpolation=cv.INTER_AREA)
+                color_img = cv.resize(color_img, (0, 0), fx=self.params.image_minimize_scale,
+                                      fy=self.params.image_minimize_scale,
+                                      interpolation=cv.INTER_AREA)
                 power += 1
 
+            if len(image_scores) > 0:
+                image_detections, image_scores = self.non_maximal_suppression(np.array(image_detections),
+                                                                              np.array(image_scores),
+                                                                              original_image.shape)
+            if len(image_scores) > 0:
+                if detections is None:
+                    detections = image_detections
+                else:
+                    detections = np.concatenate((detections, image_detections))
+                scores = np.append(scores, image_scores)
+                short_file_name = ntpath.basename(test_files[i])
+                image_names = [short_file_name for _ in range(len(image_scores))]
+                file_names = np.append(file_names, image_names)
+
+            end_time = timeit.default_timer()
+            print('Timpul de procesarea al imaginii de testare %d/%d este %f sec.'
+                  % (i, num_test_images, end_time - start_time))
+
+        return detections, scores, file_names
+
+    def run_cnn(self):
+        test_images_path = os.path.join(self.params.dir_test_examples, '*.jpg')
+        test_files = glob.glob(test_images_path)
+        detections = None  # array cu toate detectiile pe care le obtinem
+        scores = np.array([])  # array cu toate scorurile pe care le obtinem
+        file_names = np.array([])
+        # detectie din imagine, numele imaginii va aparea in aceasta lista
+        num_test_images = len(test_files)
+
+        for i in range(num_test_images):
+            start_time = timeit.default_timer()
+            print('Procesam imaginea de testare %d/%d..' % (i, num_test_images))
+            original_image = cv.imread(test_files[i], cv.IMREAD_GRAYSCALE)
+            img = cv.resize(original_image, (0, 0), fx=self.params.image_initial_scale,
+                            fy=self.params.image_initial_scale, interpolation=cv.INTER_CUBIC)
+            color_img = cv.imread(test_files[i], cv.IMREAD_COLOR)
+            color_img = cv.resize(color_img, (0, 0), fx=self.params.image_initial_scale,
+                                  fy=self.params.image_initial_scale, interpolation=cv.INTER_CUBIC)
+            power = 0
+
+            image_scores = []
+            image_detections = []
+
+            descriptors = []
+            yellow_pixels = []
+            image_coords = []
+
+            while min(img.shape[0], img.shape[1]) > self.params.dim_window:
+                for fx, fy in self.params.window_scales:
+                    distorted_img = cv.resize(img, (0, 0), fx=fx, fy=fy, interpolation=cv.INTER_AREA)
+                    if min(distorted_img.shape[0], distorted_img.shape[1]) < self.params.dim_window:
+                        break
+                    distorted_color_img = cv.resize(color_img, (0, 0), fx=fx, fy=fy, interpolation=cv.INTER_AREA)
+                    hog_descriptor = hog(distorted_img,
+                                         pixels_per_cell=(self.params.dim_hog_cell, self.params.dim_hog_cell),
+                                         cells_per_block=self.params.cells_per_block, feature_vector=False)
+                    whole_masked_image = cv.inRange(cv.cvtColor(distorted_color_img, cv.COLOR_BGR2HSV),
+                                                    self.params.hsv_color1, self.params.hsv_color2)
+                    num_cols = distorted_img.shape[1] // self.params.dim_hog_cell - 1
+                    num_rows = distorted_img.shape[0] // self.params.dim_hog_cell - 1
+                    num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - (
+                            self.params.cells_per_block[0] - 1)
+
+                    for y in range(0, num_rows - num_cell_in_template, self.params.step_between_windows):
+                        for x in range(0, num_cols - num_cell_in_template, self.params.step_between_windows):
+                            x_index_image = x * self.params.dim_hog_cell
+                            y_index_image = y * self.params.dim_hog_cell
+                            descr = hog_descriptor[y: y + num_cell_in_template, x: x + num_cell_in_template].flatten()
+                            window_masked_img = whole_masked_image[
+                                                y_index_image: y_index_image + self.params.dim_window,
+                                                x_index_image:x_index_image + self.params.dim_window]
+                            counter_yellow = (window_masked_img == 255).sum()
+                            descriptors.append(descr)
+                            yellow_pixels.append(counter_yellow)
+                            actual_zoom = 1 / (
+                                    self.params.image_initial_scale * (self.params.image_minimize_scale ** power))
+                            x_min = int((x * self.params.dim_hog_cell / fx) * actual_zoom)
+                            y_min = int((y * self.params.dim_hog_cell / fy) * actual_zoom)
+                            x_max = int(
+                                ((x * self.params.dim_hog_cell + self.params.dim_window) / fx) * actual_zoom)
+                            y_max = int(
+                                ((y * self.params.dim_hog_cell + self.params.dim_window) / fy) * actual_zoom)
+                            image_coords.append([x_min, y_min, x_max, y_max])
+                img = cv.resize(img, (0, 0), fx=self.params.image_minimize_scale, fy=self.params.image_minimize_scale,
+                                interpolation=cv.INTER_AREA)
+                color_img = cv.resize(color_img, (0, 0), fx=self.params.image_minimize_scale,
+                                      fy=self.params.image_minimize_scale,
+                                      interpolation=cv.INTER_AREA)
+                power += 1
+
+            descriptors = np.array(descriptors)
+            yellow_pixels = np.array(yellow_pixels)
+            predicted_scores = self.neural_model.predict(descriptors)
+            for index in range(len(descriptors)):
+                score = predicted_scores[index][0]
+                counter_yellow = yellow_pixels[index]
+                if score > self.params.threshold and counter_yellow > (
+                        self.params.dim_window ** 2) * self.params.yellow_percentage:
+                    image_detections.append(image_coords[index])
+                    image_scores.append(score)
+
+            print(len(image_detections))
+            print(image_scores)
             if len(image_scores) > 0:
                 image_detections, image_scores = self.non_maximal_suppression(np.array(image_detections),
                                                                               np.array(image_scores),
