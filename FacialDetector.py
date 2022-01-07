@@ -1,3 +1,5 @@
+import random
+
 import cv2
 import pandas as pd
 from tensorflow import keras
@@ -24,6 +26,53 @@ class FacialDetector:
         self.params = params
         self.best_model = None
         self.neural_model = None
+        self.neural_model_with_HOG = None
+        self.neural_model_recognition = None
+
+    def read_images(self, path):
+        images_path = os.path.join(path, "*.jpg")
+        files = glob.glob(images_path)
+        num_images = len(files)
+        images = []
+        print('Number of images read: %d' % num_images)
+
+        for i in range(num_images):
+            img = cv.imread(files[i], cv.IMREAD_COLOR)
+            images.append(img)
+
+        images = np.array(images)
+        return images
+
+    def read_characters(self):
+        names = ["bart", "homer", "lisa", "marge"]
+        images = []
+        labels = []
+
+        for name in names:
+            filename_annotations = self.params.train_dir + name + ".txt"
+            f = open(filename_annotations)
+            for line in f:
+                a = line.split(os.sep)[-1]
+                b = a.split(" ")
+
+                image_name = self.params.train_dir + name + "/" + b[0]
+                bbox = [int(b[1]), int(b[2]), int(b[3]), int(b[4])]
+
+                xmin = bbox[0]
+                ymin = bbox[1]
+                xmax = bbox[2]
+                ymax = bbox[3]
+                character = b[5][:-1]
+                image = cv.imread(image_name, cv.IMREAD_COLOR)
+                window = cv.resize(image[ymin:ymax, xmin: xmax], (self.params.dim_window, self.params.dim_window))
+
+                if character in names or character == "unknown":
+                    images.append(window)
+                    labels.append(character)
+        images = np.array(images)
+        labels = np.array(labels)
+        return images, labels
+
 
     def get_positive_descriptors(self):
         print("AM GENERAT MAI INTAI EXEMPLELE POZITIVE")
@@ -70,6 +119,85 @@ class FacialDetector:
 
         negative_descriptors = np.array(negative_descriptors)
         return negative_descriptors
+
+    def train_recognition_classifier(self, training_examples, train_labels, ignore_restore=True):
+        cnn_file_name = os.path.join(self.params.dir_save_files, 'best_model_%d_%d_%d_CNN_recognition' %
+                                     (self.params.dim_hog_cell, self.params.number_negative_examples,
+                                      self.params.number_positive_examples))
+        if os.path.exists(cnn_file_name) and ignore_restore:
+            self.neural_model_recognition = keras.models.load_model(cnn_file_name)
+            return
+
+        index_list = [i for i in range(training_examples.shape[0])]
+        random.shuffle(index_list)
+        x_data = training_examples[index_list, :, :, :]
+        y_data = train_labels[index_list]
+        percentage = 100
+        parition_percentage = 80
+        number_images = int(len(training_examples) * percentage / 100)
+        partition = int(number_images * parition_percentage / 100)
+        x_train, x_test = x_data[:partition], x_data[partition:number_images]
+        y_train, y_test = y_data[:partition], y_data[partition:number_images]
+
+        print(len(self.params.encoding.keys()))
+        print(x_train.shape)
+        print(y_train.shape)
+        print(x_test.shape)
+        print(y_test.shape)
+
+        neural_model = keras.Sequential([
+            layers.Input(shape=(36, 36, 3)),
+            layers.Conv2D(32, kernel_size=5, padding="same", activation="relu"),
+            layers.MaxPooling2D(pool_size=2, strides=2),
+            layers.Dropout(0.2),
+            layers.Conv2D(64, kernel_size=5, padding="same", activation="relu"),
+            layers.MaxPooling2D(pool_size=2, strides=2),
+            layers.Dropout(0.3),
+            layers.Flatten(),
+            layers.Dense(128, activation='relu'),
+            layers.Dropout(0.3),
+            layers.Dense(64, activation='relu'),
+            layers.Dense(len(self.params.encoding.keys()), activation="softmax")
+        ])
+        neural_model.summary()
+
+        adam = keras.optimizers.Adam(
+            learning_rate=0.001,
+            beta_1=0.9,
+            beta_2=0.999,
+            epsilon=1e-7,
+            amsgrad=False,
+            name="Adam"
+        )
+
+        early_stopping = keras.callbacks.EarlyStopping(
+            min_delta=0.01,
+            patience=5,
+            restore_best_weights=True
+        )
+
+        neural_model.compile(loss='sparse_categorical_crossentropy',
+                             optimizer=adam,
+                             metrics=['accuracy'])
+        # loss='hinge',
+
+        result = neural_model.fit(
+            x_train,
+            y_train,
+            validation_data=(x_test, y_test),
+            epochs=20,
+            # shuffle=True,
+            verbose=True,
+            use_multiprocessing=True,
+            callbacks=[early_stopping]
+        )
+        print(result)
+
+        neural_model.save(cnn_file_name)
+        self.neural_model_recognition = neural_model
+
+        print("Accuracy: " + str(np.array(result.history['accuracy'])))
+        print("Val accuracy:" + str(np.array(result.history['val_accuracy'])))
 
     def train_classifier(self, training_examples, train_labels, ignore_restore=True):
         svm_file_name = os.path.join(self.params.dir_save_files, 'best_model_%d_%d_%d' %
@@ -122,34 +250,76 @@ class FacialDetector:
             self.neural_model = keras.models.load_model(cnn_file_name)
             return
 
-        data = np.hstack((training_examples, train_labels.reshape(len(train_labels), 1)))
-        np.random.shuffle(data)
-        percentage = 80
-        partition = int(len(training_examples) * percentage / 100)
-        x_train, x_test = data[:partition, :-1], data[partition:, :-1]
-        y_train, y_test = data[:partition, -1:].ravel(), data[partition:, -1:].ravel()
+        print(training_examples.shape, train_labels.shape)
+        index_list = [i for i in range(training_examples.shape[0])]
+        random.shuffle(index_list)
+        x_data = training_examples[index_list, :, :, :]
+        y_data = train_labels[index_list]
+        percentage = 100
+        parition_percentage = 80
+        number_images = int(len(training_examples) * percentage / 100)
+        partition = int(number_images * parition_percentage / 100)
+        x_train, x_test = x_data[:partition], x_data[partition:number_images]
+        y_train, y_test = y_data[:partition], y_data[partition:number_images]
 
-        neural_model = keras.Sequential()
-        # neural_model.add(keras.Input(batch_input_shape=(64, 1296)))
-        neural_model.add(layers.Dense(128, input_shape=(len(training_examples[0]), ), activation='relu'))
-        neural_model.add(layers.Dense(64, activation='relu'))
-        neural_model.add(layers.Dense(1, kernel_regularizer=regularizers.l2(0.01)))
-        neural_model.add(layers.Activation('linear'))
+        neural_model = keras.Sequential([
+            layers.Input(shape=(36, 36, 3)),
+            layers.Conv2D(16, kernel_size=5, padding="same", activation="relu"),
+            layers.MaxPooling2D(pool_size=2, strides=2),
+            layers.Dropout(0.2),
+            layers.Conv2D(32, kernel_size=5, padding="same", activation="relu"),
+            layers.MaxPooling2D(pool_size=2, strides=2),
+            layers.Dropout(0.3),
+            layers.Flatten(),
+            layers.Dense(256, activation='relu'),
+            layers.Dropout(0.3),
+            layers.Dense(128, activation='relu'),
+            layers.Dense(1, kernel_regularizer=regularizers.l2(0.01)),
+            layers.Activation('linear')
+        ])
         neural_model.summary()
 
+        # 0.752 with 2 threshold
+        # neural_model = keras.Sequential([
+        #     layers.Input(shape=(36, 36, 3)),
+        #     layers.Conv2D(16, kernel_size=5, padding="same", activation="relu"),
+        #     layers.MaxPooling2D(pool_size=2, strides=2),
+        #     layers.Dropout(0.2),
+        #     layers.Conv2D(32, kernel_size=5, padding="same", activation="relu"),
+        #     layers.MaxPooling2D(pool_size=2, strides=2),
+        #     layers.Dropout(0.3),
+        #     layers.Flatten(),
+        #     layers.Dense(256, activation='relu'),
+        #     layers.Dropout(0.3),
+        #     layers.Dense(128, activation='relu'),
+        #     layers.Dense(1, kernel_regularizer=regularizers.l2(0.01)),
+        #     layers.Activation('linear')
+        # ])
+
+        adam = keras.optimizers.Adam(
+            learning_rate=0.001,
+            beta_1=0.9,
+            beta_2=0.999,
+            epsilon=1e-7,
+            amsgrad=False,
+            name="Adam"
+        )
+
         neural_model.compile(loss='hinge',
-                             optimizer='adam',
+                             optimizer=adam,
                              metrics=['accuracy'])
+        # loss='hinge',
 
         result = neural_model.fit(
             x_train,
             y_train,
             validation_data=(x_test, y_test),
-            epochs=5,
+            epochs=3,
             # shuffle=True,
             verbose=True,
             use_multiprocessing=True,
         )
+        print(result)
 
         neural_model.save(cnn_file_name)
         self.neural_model = neural_model
@@ -174,7 +344,7 @@ class FacialDetector:
 
         neural_model = keras.Sequential()
         # neural_model.add(keras.Input(batch_input_shape=(64, 1296)))
-        neural_model.add(layers.Dense(128, input_shape=(len(training_examples[0]), ), activation='relu'))
+        neural_model.add(layers.Dense(128, input_shape=(len(training_examples[0]),), activation='relu'))
         neural_model.add(layers.Dense(64, activation='relu'))
         neural_model.add(layers.Dense(1, kernel_regularizer=regularizers.l2(0.01)))
         neural_model.add(layers.Activation('linear'))
@@ -314,7 +484,7 @@ class FacialDetector:
                     num_cols = distorted_img.shape[1] // self.params.dim_hog_cell - 1
                     num_rows = distorted_img.shape[0] // self.params.dim_hog_cell - 1
                     num_cell_in_template = self.params.dim_window // self.params.dim_hog_cell - (
-                                self.params.cells_per_block[0] - 1)
+                            self.params.cells_per_block[0] - 1)
 
                     for y in range(0, num_rows - num_cell_in_template, self.params.step_between_windows):
                         for x in range(0, num_cols - num_cell_in_template, self.params.step_between_windows):
@@ -370,7 +540,117 @@ class FacialDetector:
 
         return detections, scores, file_names
 
-    def run_cnn(self):
+    def run_recognition(self):
+        detections_task_one = np.load(os.path.join(self.params.evaluation_dir_task_one, "detections" + self.params.task_one_text))
+        file_names_task_one = np.load(os.path.join(self.params.evaluation_dir_task_one, "file_names" + self.params.task_one_text))
+        windows_task_one = []
+        scores = []
+        names = []
+
+        for index in range(file_names_task_one.shape[0]):
+            image = cv.imread(os.path.join(self.params.dir_test_examples, file_names_task_one[index]), cv.IMREAD_COLOR)
+            x_min, y_min, x_max, y_max = detections_task_one[index]
+            window = cv.resize(image[y_min: y_max, x_min: x_max], (self.params.dim_window, self.params.dim_window))
+            windows_task_one.append(window)
+
+        windows_task_one = np.array(windows_task_one)
+        predictions = self.neural_model_recognition.predict(windows_task_one)
+
+        for index in range(file_names_task_one.shape[0]):
+            scores.append(np.max(predictions[index]))
+            names.append(np.argmax(predictions[index]))
+
+        scores = np.array(scores)
+        names = np.array(names)
+
+        return detections_task_one, scores, file_names_task_one, names
+
+    def run_CNN(self):
+        test_images_path = os.path.join(self.params.dir_test_examples, '*.jpg')
+        test_files = glob.glob(test_images_path)
+        detections = None  # array cu toate detectiile pe care le obtinem
+        scores = np.array([])  # array cu toate scorurile pe care le obtinem
+        file_names = np.array([])
+        # detectie din imagine, numele imaginii va aparea in aceasta lista
+        num_test_images = len(test_files)
+
+        for i in range(num_test_images):
+            start_time = timeit.default_timer()
+            print('Procesam imaginea de testare %d/%d..' % (i, num_test_images))
+            original_image = cv.imread(test_files[i], cv.IMREAD_COLOR)
+            img = cv.resize(original_image, (0, 0), fx=self.params.image_initial_scale,
+                            fy=self.params.image_initial_scale, interpolation=cv.INTER_CUBIC)
+            power = 0
+
+            image_scores = []
+            image_detections = []
+
+            window_images = []
+            image_coords = []
+
+            while min(img.shape[0], img.shape[1]) > self.params.dim_window:
+                for fx, fy in self.params.window_scales:
+                    distorted_img = cv.resize(img, (0, 0), fx=fx, fy=fy, interpolation=cv.INTER_AREA)
+                    if min(distorted_img.shape[0], distorted_img.shape[1]) < self.params.dim_window:
+                        break
+                    masked_img = cv.inRange(cv.cvtColor(distorted_img, cv.COLOR_BGR2HSV),
+                                            self.params.hsv_color1, self.params.hsv_color2)
+                    num_cols = distorted_img.shape[1]
+                    num_rows = distorted_img.shape[0]
+
+                    for y in range(0, num_rows - self.params.dim_window - 1, self.params.step_between_windows * self.params.dim_hog_cell):
+                        for x in range(0, num_cols - self.params.dim_window - 1, self.params.step_between_windows * self.params.dim_hog_cell):
+                            window = distorted_img[y: y + self.params.dim_window, x: x + self.params.dim_window]
+                            masked_window = masked_img[y: y + self.params.dim_window, x: x + self.params.dim_window]
+                            counter_yellow = (masked_window == 255).sum()
+                            if counter_yellow > (self.params.dim_window ** 2) * self.params.yellow_percentage:
+                                window_images.append(window)
+                                actual_zoom = 1 / (
+                                        self.params.image_initial_scale * (self.params.image_minimize_scale ** power))
+                                x_min = int((x / fx) * actual_zoom)
+                                y_min = int((y / fy) * actual_zoom)
+                                x_max = int(((x + self.params.dim_window) / fx) * actual_zoom)
+                                y_max = int(((y + self.params.dim_window) / fy) * actual_zoom)
+                                image_coords.append([x_min, y_min, x_max, y_max])
+                img = cv.resize(img, (0, 0), fx=self.params.image_minimize_scale, fy=self.params.image_minimize_scale,
+                                interpolation=cv.INTER_AREA)
+                power += 1
+
+            window_images = np.array(window_images)
+            print(window_images.shape)
+            if window_images.shape[0] < 1:
+                continue
+            predicted_scores = self.neural_model.predict(window_images)
+            print(predicted_scores)
+            for index in range(len(window_images)):
+                score = predicted_scores[index][0]
+                if score > self.params.threshold:
+                    image_detections.append(image_coords[index])
+                    image_scores.append(score)
+
+            print(len(image_detections))
+            # print(image_scores)
+            if len(image_scores) > 0:
+                image_detections, image_scores = self.non_maximal_suppression(np.array(image_detections),
+                                                                              np.array(image_scores),
+                                                                              original_image.shape)
+            if len(image_scores) > 0:
+                if detections is None:
+                    detections = image_detections
+                else:
+                    detections = np.concatenate((detections, image_detections))
+                scores = np.append(scores, image_scores)
+                short_file_name = ntpath.basename(test_files[i])
+                image_names = [short_file_name for _ in range(len(image_scores))]
+                file_names = np.append(file_names, image_names)
+
+            end_time = timeit.default_timer()
+            print('Timpul de procesarea al imaginii de testare %d/%d este %f sec.'
+                  % (i, num_test_images, end_time - start_time))
+
+        return detections, scores, file_names
+
+    def run_CNN_with_HOG(self):
         test_images_path = os.path.join(self.params.dir_test_examples, '*.jpg')
         test_files = glob.glob(test_images_path)
         detections = None  # array cu toate detectiile pe care le obtinem
@@ -442,7 +722,7 @@ class FacialDetector:
 
             descriptors = np.array(descriptors)
             yellow_pixels = np.array(yellow_pixels)
-            predicted_scores = self.neural_model.predict(descriptors)
+            predicted_scores = self.neural_model_with_HOG.predict(descriptors)
             for index in range(len(descriptors)):
                 score = predicted_scores[index][0]
                 counter_yellow = yellow_pixels[index]

@@ -7,12 +7,16 @@ class Parameters:
     def __init__(self):
         self.base_dir = 'data/'
         self.test_dir = 'validare/'
+        self.train_dir = 'antrenare/'
+        self.evaluation_dir_task_one = 'evaluare/fisiere_solutie/Sociu_Daniel_342/task1'
+        self.evaluation_dir_task_two = 'evaluare/fisiere_solutie/Sociu_Daniel_342/task2'
+        self.task_one_text = "_all_faces.npy"
         self.dir_pos_examples = os.path.join(self.base_dir, 'positiveExamples')
         self.dir_neg_examples = os.path.join(self.base_dir, 'negativeExamples')
         self.dir_test_examples = os.path.join(self.test_dir, 'simpsons_validare/')
         self.path_annotations = os.path.join(self.test_dir, 'simpsons_validare.txt')
         self.dir_save_files = os.path.join(self.base_dir, 'savedFiles')
-        self.model_used="CNN"
+        self.model_used = "SVM"
         self.image_initial_scale = 1.50
         self.image_minimize_scale = 0.90
         self.step_between_windows = 1
@@ -24,6 +28,7 @@ class Parameters:
         self.window_scales = [(1, 1), (1, 0.9), (1, 0.8), (1, 0.7), (1, 0.65)]
         # self.image_initial_scale = 1.35
         # self.image_minimize_scale = 0.90
+        self.encoding = {'bart': 0, 'homer': 1, 'lisa': 2, 'marge': 3, 'unknown': 4}
         if not os.path.exists(self.dir_save_files):
             os.makedirs(self.dir_save_files)
             print('directory created: {} '.format(self.dir_save_files))

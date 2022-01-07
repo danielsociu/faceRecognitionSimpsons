@@ -173,9 +173,9 @@ def evaluate_results_task2(solution_path, ground_truth_path, character, verbose=
 verbose = 0
 
 # change this on your machine
-solution_path_root = "..\\fisiere_solutie\\Alexe_Bogdan_331\\"
-ground_truth_path_root = "..\\..\\validare\\"
-solution_path_root = "../fisiere_solutie/Alexe_Bogdan_331/"
+# solution_path_root = "..\\fisiere_solutie\\Alexe_Bogdan_331\\"
+# ground_truth_path_root = "..\\..\\validare\\"
+solution_path_root = "../fisiere_solutie/Sociu_Daniel_342/"
 ground_truth_path_root = "../../validare/"
 # dir_save_files =
 
