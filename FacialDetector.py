@@ -2,6 +2,7 @@ import random
 
 import cv2
 import pandas as pd
+import tensorflow
 from tensorflow import keras
 from tensorflow.keras import regularizers
 from tensorflow.keras import layers
@@ -128,6 +129,8 @@ class FacialDetector:
             self.neural_model_recognition = keras.models.load_model(cnn_file_name)
             return
 
+        np.random.seed(1337)
+        tensorflow.random.set_seed(1337)
         index_list = [i for i in range(training_examples.shape[0])]
         random.shuffle(index_list)
         x_data = training_examples[index_list, :, :, :]
@@ -138,12 +141,6 @@ class FacialDetector:
         partition = int(number_images * parition_percentage / 100)
         x_train, x_test = x_data[:partition], x_data[partition:number_images]
         y_train, y_test = y_data[:partition], y_data[partition:number_images]
-
-        print(len(self.params.encoding.keys()))
-        print(x_train.shape)
-        print(y_train.shape)
-        print(x_test.shape)
-        print(y_test.shape)
 
         neural_model = keras.Sequential([
             layers.Input(shape=(36, 36, 3)),
@@ -191,7 +188,6 @@ class FacialDetector:
             use_multiprocessing=True,
             callbacks=[early_stopping]
         )
-        print(result)
 
         neural_model.save(cnn_file_name)
         self.neural_model_recognition = neural_model
@@ -250,7 +246,8 @@ class FacialDetector:
             self.neural_model = keras.models.load_model(cnn_file_name)
             return
 
-        print(training_examples.shape, train_labels.shape)
+        np.random.seed(1337)
+        tensorflow.random.set_seed(1337)
         index_list = [i for i in range(training_examples.shape[0])]
         random.shuffle(index_list)
         x_data = training_examples[index_list, :, :, :]
@@ -279,6 +276,19 @@ class FacialDetector:
         ])
         neural_model.summary()
 
+        adam = keras.optimizers.Adam(
+            learning_rate=0.001,
+            beta_1=0.9,
+            beta_2=0.999,
+            epsilon=1e-7,
+            amsgrad=False,
+            name="Adam"
+        )
+
+        neural_model.compile(loss='hinge',
+                             optimizer=adam,
+                             metrics=['accuracy'])
+
         # 0.752 with 2 threshold
         # neural_model = keras.Sequential([
         #     layers.Input(shape=(36, 36, 3)),
@@ -296,18 +306,6 @@ class FacialDetector:
         #     layers.Activation('linear')
         # ])
 
-        adam = keras.optimizers.Adam(
-            learning_rate=0.001,
-            beta_1=0.9,
-            beta_2=0.999,
-            epsilon=1e-7,
-            amsgrad=False,
-            name="Adam"
-        )
-
-        neural_model.compile(loss='hinge',
-                             optimizer=adam,
-                             metrics=['accuracy'])
         # loss='hinge',
 
         result = neural_model.fit(
@@ -319,7 +317,6 @@ class FacialDetector:
             verbose=True,
             use_multiprocessing=True,
         )
-        print(result)
 
         neural_model.save(cnn_file_name)
         self.neural_model = neural_model
@@ -333,8 +330,11 @@ class FacialDetector:
                                       self.params.number_positive_examples))
         if os.path.exists(cnn_file_name) and ignore_restore:
             self.neural_model_with_HOG = keras.models.load_model(cnn_file_name)
+            self.neural_model_with_HOG.summary()
             return
 
+        np.random.seed(2500) # 1337 - 0.759
+        tensorflow.random.set_seed(2500)
         data = np.hstack((training_examples, train_labels.reshape(len(train_labels), 1)))
         np.random.shuffle(data)
         percentage = 80
@@ -354,14 +354,21 @@ class FacialDetector:
                              optimizer='adam',
                              metrics=['accuracy'])
 
+        early_stopping = keras.callbacks.EarlyStopping(
+            min_delta=0.01,
+            patience=10,
+            restore_best_weights=True
+        )
+
         result = neural_model.fit(
             x_train,
             y_train,
             validation_data=(x_test, y_test),
-            epochs=5,
+            epochs=20,
             # shuffle=True,
             verbose=True,
             use_multiprocessing=True,
+            callbacks=[early_stopping]
         )
 
         neural_model.save(cnn_file_name)
@@ -369,25 +376,6 @@ class FacialDetector:
 
         print("Accuracy: " + str(np.array(result.history['accuracy'])))
         print("Val accuracy:" + str(np.array(result.history['val_accuracy'])))
-        # print('Performanta clasificatorului optim pt c = %f' % best_c)
-        # # salveaza clasificatorul
-        # pickle.dump(best_model, open(cnn_file_name, 'wb'))
-
-        # # vizualizeaza cat de bine sunt separate exemplele pozitive de cele negative dupa antrenare
-        # # ideal ar fi ca exemplele pozitive sa primeasca scoruri > 0, iar exemplele negative sa primeasca scoruri < 0
-        # scores = best_model.decision_function(training_examples)
-        # self.best_model = best_model
-        # positive_scores = scores[train_labels > 0]
-        # negative_scores = scores[train_labels <= 0]
-        #
-        # plt.plot(np.sort(positive_scores))
-        # plt.plot(np.zeros(len(negative_scores) + 20))
-        # plt.plot(np.sort(negative_scores))
-        # plt.xlabel('Nr example antrenare')
-        # plt.ylabel('Scor clasificator')
-        # plt.title('Distributia scorurilor clasificatorului pe exemplele de antrenare')
-        # plt.legend(['Scoruri exemple pozitive', '0', 'Scoruri exemple negative'])
-        # plt.show()
 
     def non_maximal_suppression(self, image_detections, image_scores, image_size):
         """
@@ -621,7 +609,6 @@ class FacialDetector:
             if window_images.shape[0] < 1:
                 continue
             predicted_scores = self.neural_model.predict(window_images)
-            print(predicted_scores)
             for index in range(len(window_images)):
                 score = predicted_scores[index][0]
                 if score > self.params.threshold:
@@ -732,7 +719,6 @@ class FacialDetector:
                     image_scores.append(score)
 
             print(len(image_detections))
-            print(image_scores)
             if len(image_scores) > 0:
                 image_detections, image_scores = self.non_maximal_suppression(np.array(image_detections),
                                                                               np.array(image_scores),

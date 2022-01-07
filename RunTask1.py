@@ -1,3 +1,5 @@
+import os.path
+import tensorflow
 import numpy as np
 
 from Parameters import *
@@ -22,6 +24,13 @@ params.use_flip_images = True  # adauga imaginile cu fete oglindite
 
 # Possible values: SVM, CNN_with_HOG, CNN
 params.model_used = "CNN_with_HOG"
+
+if not os.path.exists(params.dir_pos_examples):
+    os.makedirs(params.dir_pos_examples)
+if not os.path.exists(params.dir_neg_examples):
+    os.makedirs(params.dir_neg_examples)
+if not os.path.exists(params.dir_save_files):
+    os.makedirs(params.dir_save_files)
 
 if params.model_used == "SVM":
     # 0.62
@@ -55,6 +64,8 @@ if params.use_flip_images:
 facial_detector: FacialDetector = FacialDetector(params)
 
 detections, scores, file_names = None, None, None
+
+print("Predicting the data:")
 
 if params.model_used == "CNN":
     positive_images_path = params.dir_pos_examples
@@ -114,8 +125,10 @@ np.save(os.path.join(params.evaluation_dir_task_one, "detections" + params.task_
 np.save(os.path.join(params.evaluation_dir_task_one, "file_names" + params.task_one_text), file_names)
 np.save(os.path.join(params.evaluation_dir_task_one, "scores" + params.task_one_text), scores)
 
-if params.has_annotations:
-    facial_detector.eval_detections(detections, scores, file_names)
-    show_detections_with_ground_truth(detections, scores, file_names, params)
-else:
-    show_detections_without_ground_truth(detections, scores, file_names, params)
+print("Files have been saved!")
+
+# if params.has_annotations:
+#     facial_detector.eval_detections(detections, scores, file_names)
+#     show_detections_with_ground_truth(detections, scores, file_names, params)
+# else:
+#     show_detections_without_ground_truth(detections, scores, file_names, params)
